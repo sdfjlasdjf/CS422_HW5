@@ -1,0 +1,117 @@
+module KOOL-TYPED-PRIVATE
+  imports KOOL-TYPED-DYNAMIC-SYNTAX
+  imports KOOL-TYPED-DYNAMIC
+
+  // Extend the syntax to allow an optional 'private' keyword
+  syntax OptPrivate ::= [ "private" ]
+
+  syntax MemberDecl ::= OptPrivate Type Exps ";"           // For field declarations
+                      | OptPrivate Type Id "(" Params ")" Block  // For method declarations
+
+  syntax MemberDecls ::= List{MemberDecl,""}
+
+  syntax ClassBlock ::= "{" MemberDecls "}"
+
+  // Adjust class declarations to use MemberDecls
+  syntax Stmt ::= "class" Id ClassBlock
+                | "class" Id "extends" Id ClassBlock
+
+  // Modify the class declaration rule to handle MemberDecls
+  rule <k> class Class1 extends Class2 { MDs:MemberDecls } => .K ...</k>
+       <classes>... (.Bag => <classData>
+                            <className> Class1 </className>
+                            <baseClass> Class2 </baseClass>
+                            <declarations> MDs </declarations>
+                        </classData>)
+       ...</classes>
+
+  // Process MemberDecls during object creation
+  rule <k> create(Class:Id)
+           => create(Class1) ~> setCrntClass(Class) ~> MDs ~> addEnvLayer ...</k>
+       <className> Class </className>
+       <baseClass> Class1:Id </baseClass>
+       <declarations> MDs:MemberDecls </declarations>
+
+  // Process MemberDecls as a sequence
+  rule <k> .MemberDecls => .K ...</k>
+  rule <k> (MD:MemberDecl MDs:MemberDecls) => MD ~> MDs ...</k>
+
+  // Modify the environment to store privacy information
+  syntax MemberEntry ::= privacy(Privacy, Int, Id)  // Privacy, Location, Declaring Class
+  syntax Privacy ::= "public" | "private"
+
+  // Function to determine the privacy from OptPrivate
+  syntax Privacy ::= privacyOf(OptPrivate) [function]
+  rule privacyOf("private") => private
+  rule privacyOf(.OptPrivate) => public
+
+  // Adjust method declaration to store privacy
+  rule <k> (OP:OptPrivate T:Type F:Id(Ps:Params) S) => .K ...</k>
+       <crntClass> Class:Id </crntClass>
+       <location> OL </location>
+       <env> Env => Env[F <- privacy(privacyOf(OP), L, Class)] </env>
+       <store>... .Map => L |-> methodClosure(privacy(privacyOf(OP), getTypes(Ps)->T), Class, OL, Ps, S) ...</store>
+       <nextLoc> L => L +Int 1 </nextLoc>
+
+  // Adjust variable declaration to store privacy
+  rule <k> (OP:OptPrivate T:Type Xs:Exps;) => .K ...</k>
+       <env> Env => foldr (declVar(OP, T, L, Class), Xs, Env) </env>
+       <store>... .Map => foldr (storeVar(L), Xs, .Map) ...</store>
+       <nextLoc> L => L +Int length(Xs) </nextLoc>
+       <crntClass> Class </crntClass>
+
+  syntax Map ::= declVar(OptPrivate, Type, Int, Id, Id, Map) [function]
+  rule declVar(OP, T, L, Class, X, Env) => Env[X <- privacy(privacyOf(OP), L, Class)]
+
+  syntax Map ::= storeVar(Int, Exp, Map) [function]
+  rule storeVar(L, E, Store) => Store[L |-> undefined(typeOf(E))]
+
+  // Adjust member access to include privacy checks
+  syntax Exp ::= lookupMember(List, Id, Id) [function]
+
+  rule <k> objectClosure(Class, EnvStack) . X => lookupMember(EnvStack, X, AccessClass) ...</k>
+       <crntClass> AccessClass </crntClass>
+
+  rule <k> super . X => lookupMember(EStack, X, AccessClass) ...</k>
+       <crntClass> AccessClass </crntClass>
+       <envStack> ListItem(envStackFrame(Class, _)) EStack </envStack>
+
+  // Adjust lookupMember to perform privacy checks and handle private methods
+  syntax Bool ::= isPrivate(MemberEntry) [function]
+  rule isPrivate(privacy(private, _, _)) => true
+  rule isPrivate(privacy(public, _, _)) => false
+
+  rule lookupMember(ListItem(envStackFrame(DeclClass, Env)) _, X, AccessClass)
+    => checkPrivacy(Env[X], DeclClass, AccessClass, X)
+     requires X in keys(Env)
+
+  rule lookupMember(ListItem(envStackFrame(DeclClass, Env)) Rest, X, AccessClass)
+    => lookupMember(Rest, X, AccessClass)
+     requires notBool(X in keys(Env)) orElse (isPrivate(Env[X]) andBool DeclClass =/=K AccessClass)
+
+  // Check privacy and handle access accordingly
+  syntax KItem ::= checkPrivacy(MemberEntry, Id, Id, Id)
+  rule checkPrivacy(privacy(public, L, _), _, _, _) => lookup(L)
+  rule checkPrivacy(privacy(private, L, DeclClass), DeclClass, _, _) => lookup(L)
+  rule checkPrivacy(privacy(private, _, DeclClass), AccessClass, _, X)
+    => privacyError(X)
+     requires DeclClass =/=K AccessClass
+
+  syntax KItem ::= privacyError(Id)
+  rule <k> privacyError(X:Id) => abort("Access to private member " +String X +String " denied") ...</k>
+
+  // Adjust lvalue rules to include privacy checks
+  rule <k> lvalue(objectClosure(Class, EnvStack) . X) => lookupMember(EnvStack, X, AccessClass) ...</k>
+       <crntClass> AccessClass </crntClass>
+
+  // Adjust method application to prevent dynamic dispatch for private methods
+  rule (objectClosure(_, EStack) . X
+    => lookupMember(EStack, X:Id, AccessClass))(_:Exps)
+       <crntClass> AccessClass </crntClass>
+
+  // Rest of the method invocation rules remain the same
+  rule <k> (lookup(L) => V)(_:Exps) ...</k>  <store>... L |-> V:Val ...</store>
+
+  // The rest of the rules remain the same as in KOOL-TYPED-DYNAMIC
+
+endmodule
