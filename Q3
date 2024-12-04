@@ -1,0 +1,155 @@
+module KOOL-TYPED-PRIVATE-STATIC
+  imports KOOL-TYPED-STATIC-SYNTAX
+  imports KOOL-TYPED-STATIC
+
+  // Extend the syntax to allow an optional 'private' keyword
+  syntax OptPrivate ::= [ "private" ]
+
+  syntax MemberDecl ::= OptPrivate Type Exps ";"           // For field declarations
+                      | OptPrivate Type Id "(" Params ")" Block  // For method declarations
+
+  syntax MemberDecls ::= List{MemberDecl,""}
+  syntax ClassBlock ::= "{" MemberDecls "}"
+
+  // Adjust class declarations to use MemberDecls
+  syntax Stmt ::= "class" Id ClassBlock
+                | "class" Id "extends" Id ClassBlock
+
+  // Modify the class declaration rule to handle MemberDecls
+  rule <task> <k> class C:Id extends C':Id { MDs:MemberDecls } => stmt ...</k> </task>
+       (.Bag => <classData>...
+               <className> C </className>
+               <baseClass> C' </baseClass>
+             ...</classData>)
+       (.Bag => <task>
+               <k> checkType(`class`(C')) ~> MDs </k>
+               <inClass> C </inClass>
+               <ctenvT> .Map </ctenvT>
+            </task>)
+
+  // Process MemberDecls during class task
+  rule <k> .MemberDecls => .K ...</k>
+  rule <k> (MD:MemberDecl MDs:MemberDecls) => MD ~> MDs ...</k>
+
+  // Modify the environment to store privacy information
+  syntax MemberEntry ::= privacy(Privacy, Type)
+  syntax Privacy ::= "public" | "private"
+
+  // Function to determine the privacy from OptPrivate
+  syntax Privacy ::= privacyOf(OptPrivate) [function]
+  rule privacyOf("private") => private
+  rule privacyOf(.OptPrivate) => public
+
+  // Adjust variable declaration in class to store privacy
+  rule <k> (OP:OptPrivate T:Type X:Id;) => checkType(T) ~> stmt ...</k>
+       <ctenvT> Rho => Rho[X <- privacy(privacyOf(OP), T)] </ctenvT>
+    requires notBool(X in keys(Rho))
+
+  rule <k> (OP:OptPrivate T:Type X:Id;) => stuck(T X;) ...</k>
+       <ctenvT>... X |-> _ ...</ctenvT>
+       <inClass> C:Id </inClass>
+       <output>... .List => ListItem("Member \"" +String Id2String(X)
+                              +String "\" declared twice in class \""
+                              +String Id2String(C) +String "\"!\n") </output>
+
+  // Adjust method declaration to store privacy
+  rule <k> (OP:OptPrivate T:Type F:Id(Ps:Params) S)
+        => checkMethod(F, getTypes(Ps)->T, C', privacyOf(OP))
+           ~> getTypes(Ps)->T F; ...</k>
+       <inClass> C </inClass>
+       <ctenvT> Rho => Rho[F <- privacy(privacyOf(OP), getTypes(Ps)->T)] </ctenvT>
+       <className> C </className>
+       <baseClass> C' </baseClass>
+       (.Bag => <task>
+               <k> mkDecls(Ps) S </k>
+               <inClass> C </inClass>
+               <tenv> .Map </tenv>
+               <returnType> T </returnType>
+             </task>)
+    requires notBool(F in keys(Rho))
+
+  // Adjust member access to include privacy checks
+  syntax Bool ::= canAccess(MemberEntry, Id, Id) [function]
+  rule canAccess(privacy(public, _), _, _) => true
+  rule canAccess(privacy(private, _), DeclaringClass, AccessingClass)
+    => DeclaringClass ==K AccessingClass
+
+  // Adjust member lookup to perform privacy checks
+  rule <k> `class`(C:Id) . X:Id => T ...</k>
+       <className> C </className>
+       <ctenv> Rho </ctenv>
+       <inClass> C0 </inClass>
+       requires X in keys(Rho) andBool canAccess(Rho[X], C, C0)
+       with Rho[X] == privacy(P, T)
+
+  rule <k> `class`(C:Id) . X:Id => stuck(`class`(C) . X) ...</k>
+       <className> C </className>
+       <ctenv> Rho </ctenv>
+       <inClass> C0 </inClass>
+       requires X in keys(Rho) andBool notBool(canAccess(Rho[X], C, C0))
+       with Rho[X] == privacy(P, _)
+       <output>... .List => ListItem("Cannot access private member \"" +String Id2String(X)
+                                   +String "\" of class \"" +String Id2String(C)
+                                   +String "\" from class \"" +String Id2String(C0) +String "\"\n") </output>
+
+  rule <k> `class`(C1:Id => C2) . X:Id ...</k>
+       <className> C1 </className>
+       <baseClass> C2:Id </baseClass>
+       <ctenv> Rho </ctenv>
+    requires notBool(X in keys(Rho)) orBool (X in keys(Rho) andBool notBool(canAccess(Rho[X], C1, C0)))
+       <inClass> C0 </inClass>
+
+  // Check for member not declared
+  rule <k> `class`(Object) . X:Id => stuck(`class`(Object) . X) ...</k>
+       <inClass> C:Id </inClass>
+       <output>... .List => ListItem("Member \"" +String Id2String(X)
+                                  +String "\" not declared! (see class \""
+                                  +String Id2String(C) +String "\")\n") </output>
+
+  // Adjust lvalue rules to include privacy checks
+  rule <k> X:Id => this . X ...</k>
+       <tenv> Rho </tenv>
+    requires notBool(X in keys(Rho))
+
+  // Adjust method overriding checks to prevent overriding public method with private method
+  syntax KItem ::= checkMethod(Id, Type, Id, Privacy)
+  rule <k> checkMethod(F:Id, T:Type, C:Id, P:Privacy)
+         => checkSubtype(T, T') ~> checkPrivacyOverride(P, P', F, C) ...</k>
+       <className> C </className>
+       <ctenv>... F |-> privacy(P', T') ...</ctenv>
+
+  rule <k> checkMethod(F:Id, T:Type, C:Id, P:Privacy)
+         => checkMethod(F, T, C', P) ...</k>
+       <className> C </className>
+       <baseClass> C':Id </baseClass>
+       <ctenv> Rho </ctenv>
+    requires notBool(F in keys(Rho))
+
+  rule checkMethod(_:Id,_,Object,_) => .K
+
+  syntax Bool ::= isMoreRestrictive(Privacy, Privacy) [function]
+  rule isMoreRestrictive(private, public) => true
+  rule isMoreRestrictive(public, private) => false
+  rule isMoreRestrictive(P, P) => false
+
+  syntax KItem ::= checkPrivacyOverride(Privacy, Privacy, Id, Id)
+  rule checkPrivacyOverride(P, P', F, C)
+       => stuck("Cannot override " +String privacyToString(P')
+                +String " method " +String Id2String(F)
+                +String " with more restrictive " +String privacyToString(P)
+                +String " method in class " +String Id2String(C))
+    requires isMoreRestrictive(P, P')
+    <output>... .List => ListItem("Cannot override " +String privacyToString(P')
+                                +String " method \"" +String Id2String(F)
+                                +String "\" with more restrictive " +String privacyToString(P)
+                                +String " method in class \"" +String Id2String(C) +String "\"\n") </output>
+
+  rule checkPrivacyOverride(_, _, _, _) => .K
+
+  syntax String ::= privacyToString(Privacy) [function]
+  rule privacyToString(public) => "public"
+  rule privacyToString(private) => "private"
+
+  // The rest of the rules remain the same as in KOOL-TYPED-STATIC
+
+endmodule
