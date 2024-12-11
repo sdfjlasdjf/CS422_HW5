@@ -100,6 +100,5 @@ module KOOL-PRIVATE
   rule <k> lvalue(objectClosure(Class, EnvStack) . X) => lookupMember(EnvStack, X, AccessClass) ...</k>
        <crntClass> AccessClass </crntClass>
 
-  // Rest of the rules remain the same...
 
 endmodule
