@@ -150,6 +150,5 @@ module KOOL-TYPED-PRIVATE-STATIC
   rule privacyToString(public) => "public"
   rule privacyToString(private) => "private"
 
-  // The rest of the rules remain the same as in KOOL-TYPED-STATIC
 
 endmodule
