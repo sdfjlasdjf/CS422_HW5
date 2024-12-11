@@ -112,6 +112,5 @@ module KOOL-TYPED-PRIVATE
   // Rest of the method invocation rules remain the same
   rule <k> (lookup(L) => V)(_:Exps) ...</k>  <store>... L |-> V:Val ...</store>
 
-  // The rest of the rules remain the same as in KOOL-TYPED-DYNAMIC
 
 endmodule
