@@ -1,3 +1,6 @@
+module KOOL-TYPED-DYNAMIC-SYNTAX
+  imports DOMAINS-SYNTAX
+
   syntax Id ::= "Object" [token] | "Main" [token]
 
   syntax Type ::= "void" | "int" | "bool" | "string"
