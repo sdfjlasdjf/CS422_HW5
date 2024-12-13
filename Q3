@@ -216,19 +216,10 @@ module KOOL-TYPED-STATIC
 
 // CHANGES FOR PRIVATE MEMBERS START HERE
 
-// Private declarations:
 
-// Previously: var: T X;
-// Now also support: private T X;
-// We must record private members in <privateMembers> when declared inside a class or globally if allowed.
-  
-// Distinguish between local var and class var by presence of ctenvT or inClass
-
-// Non-private var (unchanged):
 rule <k> T:Type X:Id; => checkType(T) ~> stmt ...</k>
      <tenv> Rho => Rho[X <- T] </tenv>
 
-// Class member declaration (non-private):
 rule <k> T:Type X:Id; => checkType(T) ~> stmt ...</k>
      <ctenvT> Rho (.Map => X |-> T) </ctenvT>
   requires notBool(X in keys(Rho))
@@ -258,7 +249,6 @@ rule <k> private T:Type X:Id; => stuck(private T X;) ...</k>
 
 // Method declarations:
   
-// Non-private method (unchanged, just integrated with new code):
 rule <k> T:Type F:Id(Ps:Params) S
       => checkMethod(F, getTypes(Ps)->T, C')
          ~> getTypes(Ps)->T F; ...</k>
@@ -438,10 +428,6 @@ rule (<T>... <tasks> .Bag </tasks> ...</T> => .Bag)
 
 // NEW: If accessing a private member from another class or overriding method changing visibility, reject.
 
-
-// Access checks:
-// If a member X is private (X in <privateMembers>) and Rho[X] = D means it belongs to class D
-// If current class is C and C =/= D, stuck
 
 // On variable or method access:
 rule <k> X:Id => T ...</k>
